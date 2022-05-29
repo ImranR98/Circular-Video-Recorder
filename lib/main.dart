@@ -176,8 +176,12 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   void recordRecursively() async {
-    double recordMins = double.parse(recordMinsController.text);
-    int recordCount = int.parse(recordCountController.text);
+    double recordMins = recordMinsController.text == ''
+        ? 0
+        : double.parse(recordMinsController.text);
+    int recordCount = recordCountController.text == ''
+        ? 0
+        : int.parse(recordCountController.text);
     if (recordMins <= 0) {
       showInSnackBar('Enter a valid clip duration');
     } else if (recordCount <= 0) {
@@ -213,7 +217,9 @@ class _MyHomePageState extends State<MyHomePage> {
 
   Future<bool> deleteOldRecordings() async {
     bool ret = false;
-    int recordCount = int.parse(recordCountController.text);
+    int recordCount = recordCountController.text == ''
+        ? 0
+        : int.parse(recordCountController.text);
     if (recordCount > 0) {
       List<FileSystemEntity> existingFiles = await saveDir.list().toList();
       if (existingFiles.length >= recordCount) {
