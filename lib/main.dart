@@ -1,17 +1,38 @@
 import 'dart:async';
-import 'dart:html';
+import 'dart:io';
 
 import 'package:camera/camera.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 
 late List<CameraDescription> _cameras;
+// int recordMinutes = 5;
+// int recordCount = 5;
+TextEditingController recordMinsController = TextEditingController();
+TextEditingController recordCountController = TextEditingController();
+late Directory saveDir;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   _cameras = await availableCameras();
+  saveDir = await getRecordingDir();
   runApp(const MyApp());
+}
+
+Future<Directory> getRecordingDir() async {
+  Directory? saveDir;
+  while (saveDir == null) {
+    if (Platform.isAndroid) {
+      saveDir = await getExternalStorageDirectory();
+    } else if (Platform.isIOS) {
+      saveDir = await getApplicationDocumentsDirectory();
+    } else {
+      saveDir = await getDownloadsDirectory();
+    }
+  }
+  return saveDir;
 }
 
 class MyApp extends StatelessWidget {
@@ -39,13 +60,13 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  late CameraController controller;
+  late CameraController cameraController;
 
   @override
   void initState() {
     super.initState();
-    controller = CameraController(_cameras[0], ResolutionPreset.max);
-    controller.initialize().then((_) {
+    cameraController = CameraController(_cameras[0], ResolutionPreset.max);
+    cameraController.initialize().then((_) {
       if (!mounted) {
         return;
       }
@@ -54,23 +75,28 @@ class _MyHomePageState extends State<MyHomePage> {
       if (e is CameraException) {
         switch (e.code) {
           case 'CameraAccessDenied':
-            print('User denied camera access.');
+            showInSnackBar('User denied camera access');
             break;
           default:
-            print('Handle other errors.');
+            showInSnackBar('Unknown error');
             break;
         }
       }
     });
+    recordMinsController.text = "5";
+    recordCountController.text = "5";
   }
 
   @override
   void dispose() {
-    controller.dispose();
+    cameraController.dispose();
+    recordMinsController.dispose();
+    recordCountController.dispose();
     super.dispose();
   }
 
   void showInSnackBar(String message) {
+    ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
   }
@@ -81,50 +107,122 @@ class _MyHomePageState extends State<MyHomePage> {
       appBar: AppBar(
         title: Text(widget.title),
       ),
-      body: Center(
-          child: controller.value.isInitialized
-              ? CameraPreview(controller)
-              : const Text("Could not Access Camera")),
-      floatingActionButton: FloatingActionButton(
-        onPressed: controller.value.isRecordingVideo
-            ? stopRecording
-            : recordRecursively,
-        tooltip: controller.value.isRecordingVideo
-            ? 'Stop Recording'
-            : 'Start Recording',
-        child: controller.value.isRecordingVideo
-            ? const Icon(Icons.stop)
-            : const Icon(Icons.videocam),
-      ),
+      body: Column(children: [
+        Expanded(
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.black,
+              border: Border.all(
+                color: cameraController.value.isRecordingVideo
+                    ? Colors.redAccent
+                    : Colors.grey,
+                width: 3.0,
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(1.0),
+              child: Center(
+                child: cameraController.value.isInitialized
+                    ? CameraPreview(cameraController)
+                    : const Text("Could not Access Camera"),
+              ),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(5.0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.start,
+            children: <Widget>[
+              Expanded(
+                  child: TextField(
+                controller: recordMinsController,
+                enabled: !cameraController.value.isRecordingVideo,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  labelText: 'Clip Duration (Min)',
+                ),
+              )),
+              const SizedBox(width: 5),
+              Expanded(
+                  child: TextField(
+                      controller: recordCountController,
+                      enabled: !cameraController.value.isRecordingVideo,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        labelText: 'Clip Count Limit',
+                      ))),
+              Expanded(
+                  child: IconButton(
+                onPressed: cameraController.value.isRecordingVideo
+                    ? stopRecording
+                    : recordRecursively,
+                icon: cameraController.value.isRecordingVideo
+                    ? const Icon(Icons.stop_outlined)
+                    : const Icon(Icons.videocam_outlined),
+                tooltip: cameraController.value.isRecordingVideo
+                    ? 'Stop Recording'
+                    : 'Start Recording',
+              ))
+            ],
+          ),
+        ),
+      ]),
     );
   }
 
-  void recordRecursively() {
-    controller.startVideoRecording().then((_) {
+  void recordRecursively() async {
+    double recordMins = double.parse(recordMinsController.text);
+    int recordCount = int.parse(recordCountController.text);
+    if (recordMins <= 0) {
+      showInSnackBar('Enter a valid clip duration');
+    } else if (recordCount <= 0) {
+      showInSnackBar('Enter a valid maximum clip count');
+    } else {
+      await cameraController.startVideoRecording();
       setState(() {});
-      Timer(const Duration(milliseconds: 1 * 10 * 1000), () {
-        if (controller.value.isRecordingVideo) {
-          stopRecording().then((_) {
-            recordRecursively();
-          });
-        }
-      });
-    });
+      await Future.delayed(
+          Duration(milliseconds: (recordMins * 60 * 1000).toInt()));
+      if (cameraController.value.isRecordingVideo) {
+        await stopRecording();
+        recordRecursively();
+      }
+    }
   }
 
   Future<void> stopRecording() async {
-    XFile file = await controller.stopVideoRecording();
-    setState(() {});
-    showInSnackBar('Video recorded to ${file.path}');
-    if (kIsWeb) {
-      final bytes = await file.readAsBytes();
-      final uri = Uri.dataFromBytes(bytes, mimeType: 'video/webm;codecs=vp8');
-
-      final link = AnchorElement(href: uri.toString());
-      link.download =
-          'recording-${DateTime.now().millisecondsSinceEpoch.toString()}.webm';
-      link.click();
-      link.remove();
+    if (cameraController.value.isRecordingVideo) {
+      XFile tempFile = await cameraController.stopVideoRecording();
+      String appDocPath = saveDir.path;
+      String filePath =
+          '$appDocPath/CVR-${DateTime.now().millisecondsSinceEpoch.toString()}.mp4';
+      await File(filePath).writeAsBytes(await tempFile.readAsBytes());
+      File(tempFile.path).deleteSync();
+      String message = '[NEW CLIP RECORDED: $filePath]';
+      if (await deleteOldRecordings()) {
+        message += '\n\n[CLIP LIMIT REACHED - OLDER CLIP(S) DELETED]';
+      }
+      showInSnackBar(message);
+      setState(() {});
     }
+  }
+
+  Future<bool> deleteOldRecordings() async {
+    bool ret = false;
+    int recordCount = int.parse(recordCountController.text);
+    if (recordCount > 0) {
+      List<FileSystemEntity> existingFiles = await saveDir.list().toList();
+      if (existingFiles.length >= recordCount) {
+        ret = true;
+        existingFiles.sublist(recordCount).forEach((eF) {
+          eF.deleteSync();
+        });
+      }
+    }
+    return ret;
   }
 }
