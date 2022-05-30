@@ -42,9 +42,10 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Circular Video Recorder',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-      ),
+      theme:
+          ThemeData(colorScheme: const ColorScheme.light(primary: Colors.red)),
+      darkTheme:
+          ThemeData(colorScheme: const ColorScheme.dark(primary: Colors.red)),
       home: const MyHomePage(title: 'Circular Video Recorder'),
     );
   }
