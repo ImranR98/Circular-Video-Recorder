@@ -5,12 +5,12 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:keep_screen_on/keep_screen_on.dart';
 
 late List<CameraDescription> _cameras;
-// int recordMinutes = 5;
-// int recordCount = 5;
-TextEditingController recordMinsController = TextEditingController();
-TextEditingController recordCountController = TextEditingController();
+TextEditingController recordMinsController = TextEditingController(text: '60');
+TextEditingController recordCountController = TextEditingController(text: '12');
+ResolutionPreset resolutionPreset = ResolutionPreset.medium;
 late Directory saveDir;
 
 void main() async {
@@ -65,13 +65,19 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void initState() {
     super.initState();
-    cameraController = CameraController(_cameras[0], ResolutionPreset.max);
-    cameraController.initialize().then((_) {
+    initCam();
+    KeepScreenOn.turnOn();
+  }
+
+  Future<void> initCam() async {
+    cameraController = CameraController(_cameras[0], resolutionPreset);
+    try {
+      await cameraController.initialize();
       if (!mounted) {
         return;
       }
       setState(() {});
-    }).catchError((Object e) {
+    } catch (e) {
       if (e is CameraException) {
         switch (e.code) {
           case 'CameraAccessDenied':
@@ -82,9 +88,7 @@ class _MyHomePageState extends State<MyHomePage> {
             break;
         }
       }
-    });
-    recordMinsController.text = "5";
-    recordCountController.text = "5";
+    }
   }
 
   @override
@@ -92,6 +96,7 @@ class _MyHomePageState extends State<MyHomePage> {
     cameraController.dispose();
     recordMinsController.dispose();
     recordCountController.dispose();
+    KeepScreenOn.turnOff();
     super.dispose();
   }
 
@@ -114,9 +119,9 @@ class _MyHomePageState extends State<MyHomePage> {
               color: Colors.black,
               border: Border.all(
                 color: cameraController.value.isRecordingVideo
-                    ? Colors.redAccent
-                    : Colors.grey,
-                width: 3.0,
+                    ? Colors.red
+                    : Colors.black87,
+                width: 5,
               ),
             ),
             child: Padding(
@@ -130,7 +135,7 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.all(5.0),
+          padding: const EdgeInsets.all(15.0),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.start,
             children: <Widget>[
@@ -142,10 +147,10 @@ class _MyHomePageState extends State<MyHomePage> {
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
-                  labelText: 'Clip Duration (Min)',
+                  labelText: 'Clip Length (Min)',
                 ),
               )),
-              const SizedBox(width: 5),
+              const SizedBox(width: 15),
               Expanded(
                   child: TextField(
                       controller: recordCountController,
@@ -156,6 +161,34 @@ class _MyHomePageState extends State<MyHomePage> {
                         border: OutlineInputBorder(),
                         labelText: 'Clip Count Limit',
                       ))),
+              const SizedBox(width: 15),
+              Expanded(
+                  child: DropdownButtonFormField(
+                      value: resolutionPreset,
+                      items: ResolutionPreset.values
+                          .map((e) => DropdownMenuItem<ResolutionPreset>(
+                              value: e, child: Text(e.name)))
+                          .toList(),
+                      onChanged: (value) {
+                        if (value != null) {
+                          setState(() {
+                            resolutionPreset = value;
+                          });
+                          initCam();
+                        }
+                      },
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        labelText: 'Video Quality',
+                      ))),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(15.0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.start,
+            children: <Widget>[
               Expanded(
                   child: IconButton(
                 onPressed: cameraController.value.isRecordingVideo
@@ -201,17 +234,20 @@ class _MyHomePageState extends State<MyHomePage> {
   Future<void> stopRecording() async {
     if (cameraController.value.isRecordingVideo) {
       XFile tempFile = await cameraController.stopVideoRecording();
+      setState(() {});
       String appDocPath = saveDir.path;
       String filePath =
           '$appDocPath/CVR-${DateTime.now().millisecondsSinceEpoch.toString()}.mp4';
-      await File(filePath).writeAsBytes(await tempFile.readAsBytes());
-      File(tempFile.path).deleteSync();
-      String message = '[NEW CLIP RECORDED: $filePath]';
-      if (await deleteOldRecordings()) {
-        message += '\n\n[CLIP LIMIT REACHED - OLDER CLIP(S) DELETED]';
-      }
-      showInSnackBar(message);
-      setState(() {});
+      // Once clip is recorded, copying it over to the final dir and cleaning up old ones can be done asynchronously
+      tempFile.readAsBytes().then((bytes) async {
+        await File(filePath).writeAsBytes(bytes);
+        File(tempFile.path).delete();
+        String message = '[NEW CLIP RECORDED: $filePath]';
+        if (await deleteOldRecordings()) {
+          message += '\n\n[CLIP LIMIT REACHED - OLDER CLIP(S) DELETED]';
+        }
+        showInSnackBar(message);
+      });
     }
   }
 
@@ -225,7 +261,7 @@ class _MyHomePageState extends State<MyHomePage> {
       if (existingFiles.length >= recordCount) {
         ret = true;
         existingFiles.sublist(recordCount).forEach((eF) {
-          eF.deleteSync();
+          eF.delete();
         });
       }
     }
