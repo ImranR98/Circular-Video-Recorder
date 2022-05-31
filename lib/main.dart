@@ -8,9 +8,10 @@ import 'package:path_provider/path_provider.dart';
 import 'package:keep_screen_on/keep_screen_on.dart';
 
 late List<CameraDescription> _cameras;
-TextEditingController recordMinsController = TextEditingController(text: '60');
-TextEditingController recordCountController = TextEditingController(text: '12');
+int recordMins = 0;
+int recordCount = -1;
 ResolutionPreset resolutionPreset = ResolutionPreset.medium;
+DateTime currentClipStart = DateTime.now();
 late Directory saveDir;
 
 void main() async {
@@ -95,8 +96,6 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void dispose() {
     cameraController.dispose();
-    recordMinsController.dispose();
-    recordCountController.dispose();
     KeepScreenOn.turnOff();
     super.dispose();
   }
@@ -118,31 +117,62 @@ class _MyHomePageState extends State<MyHomePage> {
           child: Container(
             decoration: BoxDecoration(
               color: Colors.black,
-              border: Border.all(
-                color: cameraController.value.isRecordingVideo
-                    ? Colors.red
-                    : Colors.black87,
-                width: 5,
-              ),
+              border: Border(
+                  left: BorderSide(
+                      color: cameraController.value.isRecordingVideo
+                          ? Colors.red
+                          : Colors.black87,
+                      width: 5),
+                  right: BorderSide(
+                      color: cameraController.value.isRecordingVideo
+                          ? Colors.red
+                          : Colors.black87,
+                      width: 5),
+                  top: BorderSide(
+                      color: cameraController.value.isRecordingVideo
+                          ? Colors.red
+                          : Colors.black87,
+                      width: 5)),
             ),
             child: Padding(
               padding: const EdgeInsets.all(1.0),
               child: Center(
                 child: cameraController.value.isInitialized
                     ? CameraPreview(cameraController)
-                    : const Text("Could not Access Camera"),
+                    : const Text('Could not Access Camera'),
               ),
             ),
           ),
         ),
+        if (cameraController.value.isRecordingVideo)
+          Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.red,
+                border: Border.all(
+                  color: Colors.red,
+                  width: 5,
+                ),
+              ),
+              child: Text(
+                  'Current clip started at ${currentClipStart.hour <= 9 ? '0${currentClipStart.hour}' : currentClipStart.hour}:${currentClipStart.minute <= 9 ? '0${currentClipStart.minute}' : currentClipStart.minute}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, color: Colors.white)),
+            ),
+          ]),
         Padding(
-          padding: const EdgeInsets.all(15.0),
+          padding: const EdgeInsets.all(10.0),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.start,
             children: <Widget>[
               Expanded(
                   child: TextField(
-                controller: recordMinsController,
+                onChanged: (value) {
+                  setState(() {
+                    recordMins = value.trim() == '' ? 0 : int.parse(value);
+                  });
+                },
                 enabled: !cameraController.value.isRecordingVideo,
                 keyboardType: TextInputType.number,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
@@ -154,7 +184,12 @@ class _MyHomePageState extends State<MyHomePage> {
               const SizedBox(width: 15),
               Expanded(
                   child: TextField(
-                      controller: recordCountController,
+                      onChanged: (value) {
+                        setState(() {
+                          recordCount =
+                              value.trim() == '' ? -1 : int.parse(value);
+                        });
+                      },
                       enabled: !cameraController.value.isRecordingVideo,
                       keyboardType: TextInputType.number,
                       inputFormatters: [FilteringTextInputFormatter.digitsOnly],
@@ -170,14 +205,16 @@ class _MyHomePageState extends State<MyHomePage> {
                           .map((e) => DropdownMenuItem<ResolutionPreset>(
                               value: e, child: Text(e.name)))
                           .toList(),
-                      onChanged: (value) {
-                        if (value != null) {
-                          setState(() {
-                            resolutionPreset = value;
-                          });
-                          initCam();
-                        }
-                      },
+                      onChanged: cameraController.value.isRecordingVideo
+                          ? null
+                          : (value) {
+                              if (value != null) {
+                                setState(() {
+                                  resolutionPreset = value as ResolutionPreset;
+                                });
+                                initCam();
+                              }
+                            },
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
                         labelText: 'Video Quality',
@@ -186,7 +223,13 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.all(15.0),
+          padding: const EdgeInsets.fromLTRB(5.0, 0, 5, 0),
+          child: Text(getStatusText(),
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontWeight: FontWeight.bold)),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(5),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.start,
             children: <Widget>[
@@ -194,7 +237,9 @@ class _MyHomePageState extends State<MyHomePage> {
                   child: IconButton(
                 onPressed: cameraController.value.isRecordingVideo
                     ? stopRecording
-                    : recordRecursively,
+                    : recordMins > 0 && recordCount >= 0
+                        ? recordRecursively
+                        : null,
                 icon: cameraController.value.isRecordingVideo
                     ? const Icon(Icons.stop_outlined)
                     : const Icon(Icons.videocam_outlined),
@@ -209,20 +254,36 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  String getStatusText() {
+    if (recordMins <= 0 || recordCount < 0) {
+      String res = '';
+      if (recordMins <= 0) res += 'Length must be above 0.';
+      if (recordCount < 0) {
+        if (res.isNotEmpty) {
+          res += ' ';
+        }
+        res += 'Count must be 0 (infinite) or more.';
+      }
+      return res;
+    }
+    String status1 = cameraController.value.isRecordingVideo
+        ? 'Now recording'
+        : 'Set to record';
+    String status2 =
+        '$recordMins min clips ${recordCount == 0 ? '(until space runs out)' : '(keeping the latest ${(recordMins * recordCount) / 60} hours)'}.';
+    if (!cameraController.value.isRecordingVideo && recordMins > 15) {
+      status1 = 'Warning: Long clip lengths (above 15) may cause crashes.\n\n'
+          '$status1';
+    }
+    return '$status1 $status2';
+  }
+
   void recordRecursively() async {
-    double recordMins = recordMinsController.text == ''
-        ? 0
-        : double.parse(recordMinsController.text);
-    int recordCount = recordCountController.text == ''
-        ? 0
-        : int.parse(recordCountController.text);
-    if (recordMins <= 0) {
-      showInSnackBar('Enter a valid clip duration');
-    } else if (recordCount <= 0) {
-      showInSnackBar('Enter a valid maximum clip count');
-    } else {
+    if (recordMins > 0 && recordCount >= 0) {
       await cameraController.startVideoRecording();
-      setState(() {});
+      setState(() {
+        currentClipStart = DateTime.now();
+      });
       await Future.delayed(
           Duration(milliseconds: (recordMins * 60 * 1000).toInt()));
       if (cameraController.value.isRecordingVideo) {
@@ -234,14 +295,14 @@ class _MyHomePageState extends State<MyHomePage> {
 
   Future<void> stopRecording() async {
     if (cameraController.value.isRecordingVideo) {
+      DateTime date = currentClipStart;
       XFile tempFile = await cameraController.stopVideoRecording();
       setState(() {});
       String appDocPath = saveDir.path;
       String filePath =
-          '$appDocPath/CVR-${DateTime.now().millisecondsSinceEpoch.toString()}.mp4';
+          '$appDocPath/CVR-${date.millisecondsSinceEpoch.toString()}.mp4';
       // Once clip is recorded, copying it over to the final dir and cleaning up old ones can be done asynchronously
-      tempFile.readAsBytes().then((bytes) async {
-        await File(filePath).writeAsBytes(bytes);
+      tempFile.saveTo(filePath).then((_) async {
         File(tempFile.path).delete();
         String message = '[NEW CLIP RECORDED: $filePath]';
         if (await deleteOldRecordings()) {
@@ -254,9 +315,6 @@ class _MyHomePageState extends State<MyHomePage> {
 
   Future<bool> deleteOldRecordings() async {
     bool ret = false;
-    int recordCount = recordCountController.text == ''
-        ? 0
-        : int.parse(recordCountController.text);
     if (recordCount > 0) {
       List<FileSystemEntity> existingFiles = await saveDir.list().toList();
       if (existingFiles.length >= recordCount) {
