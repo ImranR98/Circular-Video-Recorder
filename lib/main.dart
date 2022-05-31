@@ -4,8 +4,10 @@ import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:network_info_plus/network_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:keep_screen_on/keep_screen_on.dart';
+import 'package:dhttpd/dhttpd.dart';
 
 late List<CameraDescription> _cameras;
 int recordMins = 0;
@@ -13,6 +15,8 @@ int recordCount = -1;
 ResolutionPreset resolutionPreset = ResolutionPreset.medium;
 DateTime currentClipStart = DateTime.now();
 late Directory saveDir;
+String? ip;
+Dhttpd? server;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,6 +24,26 @@ void main() async {
   _cameras = await availableCameras();
   saveDir = await getRecordingDir();
   runApp(const MyApp());
+}
+
+void generateHTMLList(String dir) async {
+  List<FileSystemEntity> existingFiles = await saveDir.list().toList();
+  String html =
+      '<!DOCTYPE html><html lang="en"><head><meta http-equiv="content-type" content="text/html; charset=utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Circular Video Recorder - Clips</title><style>@media (prefers-color-scheme: dark) {html {background-color: #222222; color: white;}} body {font-family: Arial, Helvetica, sans-serif;} a {color: inherit;}</style></head><body><h1>Circular Video Recorder - Clips:</h1>';
+  if (existingFiles.isNotEmpty) {
+    html += '<ul>';
+    for (var element in existingFiles) {
+      if (element.uri.pathSegments.last != 'index.html') {
+        html +=
+            '<li><a href="./${element.uri.pathSegments.last}">${element.uri.pathSegments.last}</a></li>';
+      }
+    }
+    html += '</ul>';
+  } else {
+    html += '<p>No Clips Found!</p>';
+  }
+  html += '</body></html>';
+  File('$dir/index.html').writeAsString(html);
 }
 
 Future<Directory> getRecordingDir() async {
@@ -43,10 +67,12 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Circular Video Recorder',
-      theme:
-          ThemeData(colorScheme: const ColorScheme.light(primary: Colors.red)),
-      darkTheme:
-          ThemeData(colorScheme: const ColorScheme.dark(primary: Colors.red)),
+      theme: ThemeData(
+          colorScheme: const ColorScheme.light(
+              primary: Colors.red, secondary: Colors.amber)),
+      darkTheme: ThemeData(
+          colorScheme: const ColorScheme.dark(
+              primary: Colors.redAccent, secondary: Colors.amberAccent)),
       home: const MyHomePage(title: 'Circular Video Recorder'),
     );
   }
@@ -68,6 +94,7 @@ class _MyHomePageState extends State<MyHomePage> {
   void initState() {
     super.initState();
     initCam();
+    generateHTMLList(saveDir.path);
     KeepScreenOn.turnOn();
   }
 
@@ -91,6 +118,28 @@ class _MyHomePageState extends State<MyHomePage> {
         }
       }
     }
+  }
+
+  Future<void> toggleWeb() async {
+    if (server == null) {
+      ip = await NetworkInfo().getWifiIP();
+      try {
+        server = await Dhttpd.start(
+            path: saveDir.path, address: InternetAddress.anyIPv4);
+      } catch (e) {
+        showInSnackBar('Error - try restarting the app');
+        await disableWeb();
+      }
+    } else {
+      await disableWeb();
+    }
+    setState(() {});
+  }
+
+  disableWeb() async {
+    await server?.destroy();
+    server = null;
+    ip = null;
   }
 
   @override
@@ -120,18 +169,18 @@ class _MyHomePageState extends State<MyHomePage> {
               border: Border(
                   left: BorderSide(
                       color: cameraController.value.isRecordingVideo
-                          ? Colors.red
-                          : Colors.black87,
+                          ? Theme.of(context).colorScheme.primary
+                          : Colors.black,
                       width: 5),
                   right: BorderSide(
                       color: cameraController.value.isRecordingVideo
-                          ? Colors.red
-                          : Colors.black87,
+                          ? Theme.of(context).colorScheme.primary
+                          : Colors.black,
                       width: 5),
                   top: BorderSide(
                       color: cameraController.value.isRecordingVideo
-                          ? Colors.red
-                          : Colors.black87,
+                          ? Theme.of(context).colorScheme.primary
+                          : Colors.black,
                       width: 5)),
             ),
             child: Padding(
@@ -144,16 +193,15 @@ class _MyHomePageState extends State<MyHomePage> {
             ),
           ),
         ),
-        // if (cameraController.value.isRecordingVideo)
         Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Container(
             decoration: BoxDecoration(
               color: cameraController.value.isRecordingVideo
-                  ? Colors.red
+                  ? Theme.of(context).colorScheme.primary
                   : Colors.black,
               border: Border.all(
                 color: cameraController.value.isRecordingVideo
-                    ? Colors.red
+                    ? Theme.of(context).colorScheme.primary
                     : Colors.black,
                 width: cameraController.value.isRecordingVideo ? 5 : 2.5,
               ),
@@ -171,8 +219,8 @@ class _MyHomePageState extends State<MyHomePage> {
           Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Container(
               padding: const EdgeInsets.fromLTRB(5, 0, 5, 5),
-              decoration: const BoxDecoration(
-                color: Colors.red,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primary,
               ),
               child: Text('${saveDir.path}/${latestFileName()}',
                   textAlign: TextAlign.center,
@@ -248,26 +296,36 @@ class _MyHomePageState extends State<MyHomePage> {
               style: const TextStyle(fontWeight: FontWeight.bold)),
         ),
         Padding(
-          padding: const EdgeInsets.all(5),
+          padding: const EdgeInsets.fromLTRB(5, 0, 5, 0),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.start,
             children: <Widget>[
               Expanded(
-                  child: IconButton(
-                onPressed: cameraController.value.isRecordingVideo
-                    ? () => stopRecording(false)
-                    : recordMins > 0 && recordCount >= 0
-                        ? recordRecursively
-                        : null,
-                icon: cameraController.value.isRecordingVideo
-                    ? const Icon(Icons.stop_outlined)
-                    : const Icon(Icons.videocam_outlined),
-                tooltip: cameraController.value.isRecordingVideo
-                    ? 'Stop Recording'
-                    : 'Start Recording',
-              ))
+                child: ElevatedButton(
+                    onPressed: cameraController.value.isRecordingVideo
+                        ? () => stopRecording(false)
+                        : recordMins > 0 && recordCount >= 0
+                            ? recordRecursively
+                            : null,
+                    child: Text(cameraController.value.isRecordingVideo
+                        ? 'Stop Recording'
+                        : 'Start Recording')),
+              ),
             ],
           ),
+        ),
+        SwitchListTile(
+          onChanged: (_) {
+            toggleWeb();
+          },
+          visualDensity: VisualDensity.compact,
+          value: server != null,
+          activeColor: Theme.of(context).colorScheme.secondary,
+          title: const Text('Serve Clips on Web GUI'),
+          subtitle: server != null
+              ? Text(
+                  'Serving on ${ip != null ? 'http://$ip:${server?.port} (LAN)' : 'http://${server?.host}:${server?.port}'}')
+              : null,
         ),
       ]),
     );
@@ -326,6 +384,7 @@ class _MyHomePageState extends State<MyHomePage> {
       // Once clip is saved, deleting cached copy and cleaning up old clips can be done asynchronously
       tempFile.saveTo(filePath).then((_) {
         File(tempFile.path).delete();
+        generateHTMLList(saveDir.path);
         if (cleanup) {
           deleteOldRecordings();
         }
@@ -346,6 +405,7 @@ class _MyHomePageState extends State<MyHomePage> {
         });
       }
     }
+    generateHTMLList(saveDir.path);
     return ret;
   }
 }
