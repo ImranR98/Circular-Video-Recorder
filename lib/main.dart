@@ -10,40 +10,13 @@ import 'package:keep_screen_on/keep_screen_on.dart';
 import 'package:dhttpd/dhttpd.dart';
 
 late List<CameraDescription> _cameras;
-int recordMins = 0;
-int recordCount = -1;
-ResolutionPreset resolutionPreset = ResolutionPreset.medium;
-DateTime currentClipStart = DateTime.now();
 late Directory saveDir;
-String? ip;
-Dhttpd? server;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
   _cameras = await availableCameras();
   saveDir = await getRecordingDir();
   runApp(const MyApp());
-}
-
-void generateHTMLList(String dir) async {
-  List<FileSystemEntity> existingFiles = await saveDir.list().toList();
-  String html =
-      '<!DOCTYPE html><html lang="en"><head><meta http-equiv="content-type" content="text/html; charset=utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Circular Video Recorder - Clips</title><style>@media (prefers-color-scheme: dark) {html {background-color: #222222; color: white;}} body {font-family: Arial, Helvetica, sans-serif;} a {color: inherit;}</style></head><body><h1>Circular Video Recorder - Clips:</h1>';
-  if (existingFiles.isNotEmpty) {
-    html += '<ul>';
-    for (var element in existingFiles) {
-      if (element.uri.pathSegments.last != 'index.html') {
-        html +=
-            '<li><a href="./${element.uri.pathSegments.last}">${element.uri.pathSegments.last}</a></li>';
-      }
-    }
-    html += '</ul>';
-  } else {
-    html += '<p>No Clips Found!</p>';
-  }
-  html += '</body></html>';
-  File('$dir/index.html').writeAsString(html);
 }
 
 Future<Directory> getRecordingDir() async {
@@ -89,13 +62,19 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   late CameraController cameraController;
+  int recordMins = 0;
+  int recordCount = -1;
+  ResolutionPreset resolutionPreset = ResolutionPreset.medium;
+  DateTime currentClipStart = DateTime.now();
+  String? ip;
+  Dhttpd? server;
 
   @override
   void initState() {
     super.initState();
+    KeepScreenOn.turnOn();
     initCam();
     generateHTMLList(saveDir.path);
-    KeepScreenOn.turnOn();
   }
 
   Future<void> initCam() async {
@@ -120,39 +99,24 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  Future<void> toggleWeb() async {
-    if (server == null) {
-      ip = await NetworkInfo().getWifiIP();
-      try {
-        server = await Dhttpd.start(
-            path: saveDir.path, address: InternetAddress.anyIPv4);
-      } catch (e) {
-        showInSnackBar('Error - try restarting the app');
-        await disableWeb();
+  Future<void> generateHTMLList(String dir) async {
+    List<FileSystemEntity> existingFiles = await saveDir.list().toList();
+    String html =
+        '<!DOCTYPE html><html lang="en"><head><meta http-equiv="content-type" content="text/html; charset=utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Circular Video Recorder - Clips</title><style>@media (prefers-color-scheme: dark) {html {background-color: #222222; color: white;}} body {font-family: Arial, Helvetica, sans-serif;} a {color: inherit;}</style></head><body><h1>Circular Video Recorder - Clips:</h1>';
+    if (existingFiles.isNotEmpty) {
+      html += '<ul>';
+      for (var element in existingFiles) {
+        if (element.uri.pathSegments.last != 'index.html') {
+          html +=
+              '<li><a href="./${element.uri.pathSegments.last}">${element.uri.pathSegments.last}</a></li>';
+        }
       }
+      html += '</ul>';
     } else {
-      await disableWeb();
+      html += '<p>No Clips Found!</p>';
     }
-    setState(() {});
-  }
-
-  disableWeb() async {
-    await server?.destroy();
-    server = null;
-    ip = null;
-  }
-
-  @override
-  void dispose() {
-    cameraController.dispose();
-    KeepScreenOn.turnOff();
-    super.dispose();
-  }
-
-  void showInSnackBar(String message) {
-    ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    html += '</body></html>';
+    File('$dir/index.html').writeAsString(html);
   }
 
   @override
@@ -331,6 +295,36 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  void showInSnackBar(String message) {
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> toggleWeb() async {
+    if (server == null) {
+      try {
+        ip = await NetworkInfo().getWifiIP();
+        server = await Dhttpd.start(
+            path: saveDir.path, address: InternetAddress.anyIPv4);
+        setState(() {});
+      } catch (e) {
+        showInSnackBar('Error - try restarting the app');
+        await disableWeb();
+      }
+    } else {
+      await disableWeb();
+    }
+  }
+
+  Future<void> disableWeb() async {
+    await server?.destroy();
+    setState(() {
+      server = null;
+      ip = null;
+    });
+  }
+
   String getStatusText() {
     if (recordMins <= 0 || recordCount < 0) {
       String res = '';
@@ -407,5 +401,12 @@ class _MyHomePageState extends State<MyHomePage> {
     }
     generateHTMLList(saveDir.path);
     return ret;
+  }
+
+  @override
+  void dispose() {
+    cameraController.dispose();
+    KeepScreenOn.turnOff();
+    super.dispose();
   }
 }
