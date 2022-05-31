@@ -144,21 +144,42 @@ class _MyHomePageState extends State<MyHomePage> {
             ),
           ),
         ),
+        // if (cameraController.value.isRecordingVideo)
+        Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Container(
+            decoration: BoxDecoration(
+              color: cameraController.value.isRecordingVideo
+                  ? Colors.red
+                  : Colors.black,
+              border: Border.all(
+                color: cameraController.value.isRecordingVideo
+                    ? Colors.red
+                    : Colors.black,
+                width: cameraController.value.isRecordingVideo ? 5 : 2.5,
+              ),
+            ),
+            child: cameraController.value.isRecordingVideo
+                ? Text(
+                    'Current clip started at ${currentClipStart.hour <= 9 ? '0${currentClipStart.hour}' : currentClipStart.hour}:${currentClipStart.minute <= 9 ? '0${currentClipStart.minute}' : currentClipStart.minute}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, color: Colors.white))
+                : null,
+          ),
+        ]),
         if (cameraController.value.isRecordingVideo)
           Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Container(
               decoration: BoxDecoration(
-                color: Colors.red,
+                color: Colors.black,
                 border: Border.all(
-                  color: Colors.red,
+                  color: Colors.black,
                   width: 5,
                 ),
               ),
-              child: Text(
-                  'Current clip started at ${currentClipStart.hour <= 9 ? '0${currentClipStart.hour}' : currentClipStart.hour}:${currentClipStart.minute <= 9 ? '0${currentClipStart.minute}' : currentClipStart.minute}',
+              child: Text('${saveDir.path}/${latestFileName()}',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold, color: Colors.white)),
+                  style: const TextStyle(letterSpacing: 1)),
             ),
           ]),
         Padding(
@@ -236,7 +257,7 @@ class _MyHomePageState extends State<MyHomePage> {
               Expanded(
                   child: IconButton(
                 onPressed: cameraController.value.isRecordingVideo
-                    ? stopRecording
+                    ? () => stopRecording(false)
                     : recordMins > 0 && recordCount >= 0
                         ? recordRecursively
                         : null,
@@ -269,8 +290,9 @@ class _MyHomePageState extends State<MyHomePage> {
     String status1 = cameraController.value.isRecordingVideo
         ? 'Now recording'
         : 'Set to record';
+    int totalMins = recordMins * recordCount;
     String status2 =
-        '$recordMins min clips ${recordCount == 0 ? '(until space runs out)' : '(keeping the latest ${(recordMins * recordCount) / 60} hours)'}.';
+        '$recordMins min clips ${recordCount == 0 ? '(until space runs out)' : '(keeping the latest ${totalMins < 60 ? '$totalMins minutes' : '${totalMins / 60} hours'})'}.';
     if (!cameraController.value.isRecordingVideo && recordMins > 15) {
       status1 = 'Warning: Long clip lengths (above 15) may cause crashes.\n\n'
           '$status1';
@@ -287,28 +309,28 @@ class _MyHomePageState extends State<MyHomePage> {
       await Future.delayed(
           Duration(milliseconds: (recordMins * 60 * 1000).toInt()));
       if (cameraController.value.isRecordingVideo) {
-        await stopRecording();
+        await stopRecording(true);
         recordRecursively();
       }
     }
   }
 
-  Future<void> stopRecording() async {
+  String latestFileName() {
+    return 'CVR-${currentClipStart.millisecondsSinceEpoch.toString()}.mp4';
+  }
+
+  Future<void> stopRecording(bool cleanup) async {
     if (cameraController.value.isRecordingVideo) {
-      DateTime date = currentClipStart;
       XFile tempFile = await cameraController.stopVideoRecording();
       setState(() {});
       String appDocPath = saveDir.path;
-      String filePath =
-          '$appDocPath/CVR-${date.millisecondsSinceEpoch.toString()}.mp4';
-      // Once clip is recorded, copying it over to the final dir and cleaning up old ones can be done asynchronously
-      tempFile.saveTo(filePath).then((_) async {
+      String filePath = '$appDocPath/${latestFileName()}';
+      // Once clip is saved, deleting cached copy and cleaning up old clips can be done asynchronously
+      tempFile.saveTo(filePath).then((_) {
         File(tempFile.path).delete();
-        String message = '[NEW CLIP RECORDED: $filePath]';
-        if (await deleteOldRecordings()) {
-          message += '\n\n[CLIP LIMIT REACHED - OLDER CLIP(S) DELETED]';
+        if (cleanup) {
+          deleteOldRecordings();
         }
-        showInSnackBar(message);
       });
     }
   }
@@ -320,6 +342,8 @@ class _MyHomePageState extends State<MyHomePage> {
       if (existingFiles.length >= recordCount) {
         ret = true;
         existingFiles.sublist(recordCount).forEach((eF) {
+          showInSnackBar(
+              'Clip limit reached. Deleting:\n' '${eF.uri.pathSegments.last}');
           eF.delete();
         });
       }
