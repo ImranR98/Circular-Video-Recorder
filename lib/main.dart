@@ -170,16 +170,14 @@ class _MyHomePageState extends State<MyHomePage> {
         if (cameraController.value.isRecordingVideo)
           Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Container(
-              decoration: BoxDecoration(
-                color: Colors.black,
-                border: Border.all(
-                  color: Colors.black,
-                  width: 5,
-                ),
+              padding: const EdgeInsets.fromLTRB(5, 0, 5, 5),
+              decoration: const BoxDecoration(
+                color: Colors.red,
               ),
               child: Text('${saveDir.path}/${latestFileName()}',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(letterSpacing: 1)),
+                  style:
+                      const TextStyle(letterSpacing: 1, color: Colors.white)),
             ),
           ]),
         Padding(
@@ -343,7 +341,7 @@ class _MyHomePageState extends State<MyHomePage> {
         ret = true;
         existingFiles.sublist(recordCount).forEach((eF) {
           showInSnackBar(
-              'Clip limit reached. Deleting:\n' '${eF.uri.pathSegments.last}');
+              'Clip limit reached. Deleting: ${eF.uri.pathSegments.last}');
           eF.delete();
         });
       }
