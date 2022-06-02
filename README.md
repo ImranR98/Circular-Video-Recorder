@@ -6,7 +6,7 @@ Options:
 - Clip count limit to avoid running out of storage space.
 - Server to make the clips available for download on the local network. 
 
-*Note: On Android, recordings are stored in `/Android/data/dev.imranr.circular_video_recorder/files`, which is accessible via the file manager but is not shown in gallery apps.*
+Note: Clips are saved to the App's internal storage so that they can automatically be deleted when the user-specified limit is reached. This internal Clip storage is not accessible via Gallery apps, and is cleared when the App is uninstalled. A button is provided to move Clips to an external Gallery-accessible folder.
 
 ## Screenshots
 <img src="./assets/screenshots/screenshot1.png" alt="App Screenshot 1" width="30%">
