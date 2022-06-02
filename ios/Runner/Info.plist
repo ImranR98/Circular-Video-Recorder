@@ -48,8 +48,10 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>your usage description here</string>
+	<string>To record video clips when instructed to do so by the user.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>your usage description here</string>
+	<string>To record audio while recording video when instructed to do so by the user.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>To save video clips recorded by the user to the gallery.</string>
 </dict>
 </plist>

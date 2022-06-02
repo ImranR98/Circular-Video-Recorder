@@ -8,6 +8,7 @@ import 'package:network_info_plus/network_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:keep_screen_on/keep_screen_on.dart';
 import 'package:dhttpd/dhttpd.dart';
+import 'package:gallery_saver/gallery_saver.dart';
 
 late List<CameraDescription> _cameras;
 late Directory saveDir;
@@ -68,13 +69,15 @@ class _MyHomePageState extends State<MyHomePage> {
   DateTime currentClipStart = DateTime.now();
   String? ip;
   Dhttpd? server;
+  bool saving = false;
+  bool moving = false;
 
   @override
   void initState() {
     super.initState();
     KeepScreenOn.turnOn();
     initCam();
-    generateHTMLList(saveDir.path);
+    generateHTMLList();
   }
 
   Future<void> initCam() async {
@@ -99,24 +102,29 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  Future<void> generateHTMLList(String dir) async {
+  Future<List<FileSystemEntity>> getExistingClips() async {
     List<FileSystemEntity> existingFiles = await saveDir.list().toList();
+    existingFiles.removeWhere(
+        (element) => element.uri.pathSegments.last == 'index.html');
+    return existingFiles;
+  }
+
+  Future<void> generateHTMLList() async {
+    List<FileSystemEntity> existingClips = await getExistingClips();
     String html =
         '<!DOCTYPE html><html lang="en"><head><meta http-equiv="content-type" content="text/html; charset=utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Circular Video Recorder - Clips</title><style>@media (prefers-color-scheme: dark) {html {background-color: #222222; color: white;}} body {font-family: Arial, Helvetica, sans-serif;} a {color: inherit;}</style></head><body><h1>Circular Video Recorder - Clips:</h1>';
-    if (existingFiles.isNotEmpty) {
+    if (existingClips.isNotEmpty) {
       html += '<ul>';
-      for (var element in existingFiles) {
-        if (element.uri.pathSegments.last != 'index.html') {
-          html +=
-              '<li><a href="./${element.uri.pathSegments.last}">${element.uri.pathSegments.last}</a></li>';
-        }
+      for (var element in existingClips) {
+        html +=
+            '<li><a href="./${element.uri.pathSegments.last}">${element.uri.pathSegments.last}</a></li>';
       }
       html += '</ul>';
     } else {
       html += '<p>No Clips Found!</p>';
     }
     html += '</body></html>';
-    File('$dir/index.html').writeAsString(html);
+    File('${saveDir.path}/index.html').writeAsString(html);
   }
 
   @override
@@ -275,6 +283,22 @@ class _MyHomePageState extends State<MyHomePage> {
                         ? 'Stop Recording'
                         : 'Start Recording')),
               ),
+              const SizedBox(width: 5),
+              OutlinedButton(
+                onPressed: moveToGallery,
+                style: Theme.of(context).brightness == Brightness.light
+                    ? ButtonStyle(
+                        foregroundColor:
+                            MaterialStateProperty.all(Colors.black),
+                        overlayColor: MaterialStateProperty.all(
+                            const Color.fromARGB(20, 0, 0, 0)))
+                    : ButtonStyle(
+                        foregroundColor:
+                            MaterialStateProperty.all(Colors.white),
+                        overlayColor: MaterialStateProperty.all(
+                            const Color.fromARGB(20, 255, 255, 255))),
+                child: const Text('Move Clips to Gallery'),
+              )
             ],
           ),
         ),
@@ -291,6 +315,21 @@ class _MyHomePageState extends State<MyHomePage> {
                   'Serving on ${ip != null ? 'http://$ip:${server?.port} (LAN)' : 'http://${server?.host}:${server?.port}'}')
               : null,
         ),
+        if (saving || moving)
+          Container(
+              decoration:
+                  BoxDecoration(color: Theme.of(context).colorScheme.primary),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(5, 5, 5, 5),
+                child: Row(children: [
+                  Text(
+                      '${saving && moving ? 'Saving & moving clips' : saving ? 'Saving last clip' : 'Moving clips'} - do not exit...',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, color: Colors.white))
+                ]),
+              )),
+        if (saving || moving) const LinearProgressIndicator(),
       ]),
     );
   }
@@ -376,9 +415,15 @@ class _MyHomePageState extends State<MyHomePage> {
       String appDocPath = saveDir.path;
       String filePath = '$appDocPath/${latestFileName()}';
       // Once clip is saved, deleting cached copy and cleaning up old clips can be done asynchronously
+      setState(() {
+        saving = true;
+      });
       tempFile.saveTo(filePath).then((_) {
         File(tempFile.path).delete();
-        generateHTMLList(saveDir.path);
+        generateHTMLList();
+        setState(() {
+          saving = false;
+        });
         if (cleanup) {
           deleteOldRecordings();
         }
@@ -389,18 +434,64 @@ class _MyHomePageState extends State<MyHomePage> {
   Future<bool> deleteOldRecordings() async {
     bool ret = false;
     if (recordCount > 0) {
-      List<FileSystemEntity> existingFiles = await saveDir.list().toList();
-      if (existingFiles.length >= recordCount) {
+      List<FileSystemEntity> existingClips = await getExistingClips();
+      if (existingClips.length > recordCount) {
         ret = true;
-        existingFiles.sublist(recordCount).forEach((eF) {
+        await Future.wait(existingClips.sublist(recordCount).map((eC) {
           showInSnackBar(
-              'Clip limit reached. Deleting: ${eF.uri.pathSegments.last}');
-          eF.delete();
-        });
+              'Clip limit reached. Deleting: ${eC.uri.pathSegments.last}');
+          return eC.delete();
+        }));
+        generateHTMLList();
       }
     }
-    generateHTMLList(saveDir.path);
     return ret;
+  }
+
+  moveToGallery() async {
+    List<FileSystemEntity> existingClips = await getExistingClips();
+    if (existingClips.isEmpty) {
+      showInSnackBar('You have no recorded Clips!');
+    } else if (saving) {
+      showInSnackBar('A clip is still being saved - try again later');
+    } else {
+      showDialog(
+          context: context,
+          builder: (BuildContext ctx) {
+            return AlertDialog(
+              title: const Text('Confirmation'),
+              content: const Text(
+                  'This action will move all Clips in this App\'s internal storage to an external location accessible via a Gallery app.\n\nThese clips will no longer be "owned" by the App, so they will not be accessible via the Web GUI nor affected by the Clip Count Limit.\n\nContinue?'),
+              actions: [
+                TextButton(
+                    onPressed: () async {
+                      // Remove the box
+                      setState(() {
+                        moving = true;
+                      });
+                      Navigator.of(context).pop();
+                      for (var eC in existingClips) {
+                        await GallerySaver.saveVideo(eC.path,
+                            albumName: 'Circular Video Recorder');
+                      }
+                      await Future.wait(existingClips.map((eC) => eC.delete()));
+                      generateHTMLList();
+                      showInSnackBar(
+                          '${existingClips.length} Clips moved to Gallery');
+                      setState(() {
+                        moving = false;
+                      });
+                    },
+                    child: const Text('Yes')),
+                TextButton(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                    },
+                    child: const Text('No'))
+              ],
+            );
+          });
+    }
   }
 
   @override
