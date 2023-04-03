@@ -2,9 +2,6 @@
 
 Continuously record video in small clips.
 
-Options:
-- Clip count limit to avoid running out of storage space.
-
 ## Screenshots
 <img src="./assets/screenshots/screenshot1.png" alt="App Screenshot 1" width="30%">
 <img src="./assets/screenshots/screenshot2.png" alt="App Screenshot 2" width="30%">
