@@ -7,7 +7,6 @@ import 'package:flutter/services.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:keep_screen_on/keep_screen_on.dart';
-import 'package:dhttpd/dhttpd.dart';
 import 'package:gallery_saver/gallery_saver.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -92,7 +91,6 @@ class _MyHomePageState extends State<MyHomePage> {
   ResolutionPreset resolutionPreset = ResolutionPreset.medium;
   DateTime currentClipStart = DateTime.now();
   String? ip;
-  Dhttpd? server;
   bool saving = false;
   bool moving = false;
   Directory? exportDir;
@@ -302,22 +300,6 @@ class _MyHomePageState extends State<MyHomePage> {
             ],
           ),
         ),
-        const Divider(
-          height: 0,
-        ),
-        SwitchListTile(
-            onChanged: (_) {
-              toggleWeb();
-            },
-            visualDensity: VisualDensity.compact,
-            value: server != null,
-            activeColor: Theme.of(context).colorScheme.secondary,
-            title: const Text('Serve Clips on Web GUI (Insecure)'),
-            subtitle: server == null
-                ? null
-                : Text(
-                    'Serving on ${'http://${ip ?? server?.host}:${server?.port}'}',
-                  )),
         if (saving || moving)
           Container(
               decoration:
@@ -341,30 +323,6 @@ class _MyHomePageState extends State<MyHomePage> {
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
-  }
-
-  Future<void> toggleWeb() async {
-    if (server == null && saveDir != null) {
-      try {
-        ip = await NetworkInfo().getWifiIP();
-        server = await Dhttpd.start(
-            path: saveDir!.path, address: InternetAddress.anyIPv4);
-        setState(() {});
-      } catch (e) {
-        showInSnackBar('Error - try restarting the app');
-        await disableWeb();
-      }
-    } else {
-      await disableWeb();
-    }
-  }
-
-  Future<void> disableWeb() async {
-    await server?.destroy();
-    setState(() {
-      server = null;
-      ip = null;
-    });
   }
 
   String? getStatusText() {
