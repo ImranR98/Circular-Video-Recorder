@@ -4,7 +4,8 @@
    <application
         android:label="Circular Video Recorder"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:requestLegacyExternalStorage="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -32,4 +33,7 @@
             android:name="flutterEmbedding"
             android:value="2" />
     </application>
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29"/>
 </manifest>

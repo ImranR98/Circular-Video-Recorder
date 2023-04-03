@@ -9,9 +9,11 @@ import 'package:path_provider/path_provider.dart';
 import 'package:keep_screen_on/keep_screen_on.dart';
 import 'package:dhttpd/dhttpd.dart';
 import 'package:gallery_saver/gallery_saver.dart';
+import 'package:device_info_plus/device_info_plus.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 late List<CameraDescription> _cameras;
-late Directory saveDir;
+Directory? saveDir;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,18 +22,35 @@ void main() async {
   runApp(const MyApp());
 }
 
-Future<Directory> getRecordingDir() async {
-  Directory? saveDir;
-  while (saveDir == null) {
-    if (Platform.isAndroid) {
-      saveDir = await getExternalStorageDirectory();
-    } else if (Platform.isIOS) {
-      saveDir = await getApplicationDocumentsDirectory();
-    } else {
-      saveDir = await getDownloadsDirectory();
+Future<Directory?> getRecordingDir() async {
+  Directory? exportDir;
+  if (Platform.isAndroid &&
+      (await DeviceInfoPlugin().androidInfo).version.sdkInt <= 29) {
+    while (await Permission.storage.isDenied) {
+      await Permission.storage.request();
     }
   }
-  return saveDir;
+  if (Platform.isAndroid) {
+    exportDir = Directory('/storage/emulated/0/Documents');
+    try {
+      exportDir.existsSync();
+    } catch (e) {
+      exportDir = null;
+    }
+  }
+  if (exportDir == null) {
+    if (Platform.isAndroid) {
+      exportDir = await getExternalStorageDirectory();
+    } else if (Platform.isIOS) {
+      exportDir = await getApplicationDocumentsDirectory();
+    } else {
+      exportDir = await getDownloadsDirectory();
+    }
+  }
+  exportDir =
+      exportDir != null ? Directory('${exportDir.path}/CVR_Clips') : null;
+  exportDir?.createSync(recursive: true);
+  return exportDir;
 }
 
 class MyApp extends StatelessWidget {
@@ -42,15 +61,20 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Circular Video Recorder',
       theme: ThemeData(
+          useMaterial3: true,
           colorScheme: const ColorScheme.light(
               primary: Colors.red, secondary: Colors.amber)),
       darkTheme: ThemeData(
+          useMaterial3: true,
           colorScheme: const ColorScheme.dark(
               primary: Colors.redAccent, secondary: Colors.amberAccent)),
       home: const MyHomePage(title: 'Circular Video Recorder'),
     );
   }
 }
+
+var initMins = 15;
+var initCount = 48;
 
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key, required this.title});
@@ -63,14 +87,17 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   late CameraController cameraController;
-  int recordMins = 0;
-  int recordCount = -1;
+  int recordMins = initMins;
+  int recordCount = initCount;
   ResolutionPreset resolutionPreset = ResolutionPreset.medium;
   DateTime currentClipStart = DateTime.now();
   String? ip;
   Dhttpd? server;
   bool saving = false;
   bool moving = false;
+  Directory? exportDir;
+  var lenController = TextEditingController(text: initMins.toString());
+  var countController = TextEditingController(text: initCount.toString());
 
   @override
   void initState() {
@@ -103,17 +130,17 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Future<List<FileSystemEntity>> getExistingClips() async {
-    List<FileSystemEntity> existingFiles = await saveDir.list().toList();
-    existingFiles.removeWhere(
+    List<FileSystemEntity>? existingFiles = await saveDir?.list().toList();
+    existingFiles?.removeWhere(
         (element) => element.uri.pathSegments.last == 'index.html');
-    return existingFiles;
+    return existingFiles ?? [];
   }
 
   Future<void> generateHTMLList() async {
     List<FileSystemEntity> existingClips = await getExistingClips();
     String html =
         '<!DOCTYPE html><html lang="en"><head><meta http-equiv="content-type" content="text/html; charset=utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Circular Video Recorder - Clips</title><style>@media (prefers-color-scheme: dark) {html {background-color: #222222; color: white;}} body {font-family: Arial, Helvetica, sans-serif;} a {color: inherit;}</style></head><body><h1>Circular Video Recorder - Clips:</h1>';
-    if (existingClips.isNotEmpty) {
+    if (saveDir != null && existingClips.isNotEmpty) {
       html += '<ul>';
       for (var element in existingClips) {
         html +=
@@ -124,89 +151,57 @@ class _MyHomePageState extends State<MyHomePage> {
       html += '<p>No Clips Found!</p>';
     }
     html += '</body></html>';
-    File('${saveDir.path}/index.html').writeAsString(html);
+    File('${saveDir!.path}/index.html').writeAsString(html);
   }
 
   @override
   Widget build(BuildContext context) {
+    var status = getStatusText();
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.title),
       ),
       body: Column(children: [
         Expanded(
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.black,
-              border: Border(
-                  left: BorderSide(
-                      color: cameraController.value.isRecordingVideo
-                          ? Theme.of(context).colorScheme.primary
-                          : Colors.black,
-                      width: 5),
-                  right: BorderSide(
-                      color: cameraController.value.isRecordingVideo
-                          ? Theme.of(context).colorScheme.primary
-                          : Colors.black,
-                      width: 5),
-                  top: BorderSide(
-                      color: cameraController.value.isRecordingVideo
-                          ? Theme.of(context).colorScheme.primary
-                          : Colors.black,
-                      width: 5)),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(1.0),
-              child: Center(
-                child: cameraController.value.isInitialized
-                    ? CameraPreview(cameraController)
-                    : const Text('Could not Access Camera'),
-              ),
-            ),
+          child: Center(
+            child: cameraController.value.isInitialized
+                ? CameraPreview(cameraController)
+                : const Text('Could not Access Camera'),
           ),
         ),
         Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Container(
-            decoration: BoxDecoration(
-              color: cameraController.value.isRecordingVideo
-                  ? Theme.of(context).colorScheme.primary
-                  : Colors.black,
-              border: Border.all(
-                color: cameraController.value.isRecordingVideo
-                    ? Theme.of(context).colorScheme.primary
-                    : Colors.black,
-                width: cameraController.value.isRecordingVideo ? 5 : 2.5,
-              ),
-            ),
             child: cameraController.value.isRecordingVideo
                 ? Text(
                     'Current clip started at ${currentClipStart.hour <= 9 ? '0${currentClipStart.hour}' : currentClipStart.hour}:${currentClipStart.minute <= 9 ? '0${currentClipStart.minute}' : currentClipStart.minute}',
                     textAlign: TextAlign.center,
                     style: const TextStyle(
-                        fontWeight: FontWeight.bold, color: Colors.white))
+                      fontWeight: FontWeight.bold,
+                    ))
                 : null,
           ),
         ]),
         if (cameraController.value.isRecordingVideo)
           Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Container(
-              padding: const EdgeInsets.fromLTRB(5, 0, 5, 5),
+              padding: const EdgeInsets.fromLTRB(5, 5, 5, 5),
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.primary,
               ),
-              child: Text('${saveDir.path}/${latestFileName()}',
+              child: Text(latestFilePath(),
                   textAlign: TextAlign.center,
-                  style:
-                      const TextStyle(letterSpacing: 1, color: Colors.white)),
+                  style: const TextStyle(
+                      fontFamily: 'monospace', color: Colors.white)),
             ),
           ]),
         Padding(
-          padding: const EdgeInsets.all(10.0),
+          padding: const EdgeInsets.fromLTRB(15, 15, 15, 10),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.start,
             children: <Widget>[
               Expanded(
                   child: TextField(
+                controller: lenController,
                 onChanged: (value) {
                   setState(() {
                     recordMins = value.trim() == '' ? 0 : int.parse(value);
@@ -223,6 +218,7 @@ class _MyHomePageState extends State<MyHomePage> {
               const SizedBox(width: 15),
               Expanded(
                   child: TextField(
+                      controller: countController,
                       onChanged: (value) {
                         setState(() {
                           recordCount =
@@ -262,45 +258,52 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(5.0, 0, 5, 0),
-          child: Text(getStatusText(),
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontWeight: FontWeight.bold)),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(5, 0, 5, 0),
+          padding: const EdgeInsets.fromLTRB(15, 0, 15, 15),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.start,
-            children: <Widget>[
-              Expanded(
-                child: ElevatedButton(
-                    onPressed: cameraController.value.isRecordingVideo
-                        ? () => stopRecording(false)
-                        : recordMins > 0 && recordCount >= 0
-                            ? recordRecursively
-                            : null,
-                    child: Text(cameraController.value.isRecordingVideo
-                        ? 'Stop Recording'
-                        : 'Start Recording')),
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Flexible(
+                  child: Text(
+                status ??
+                    'A count limit of 0 is infinite.\nLower the length/count in case of crashes.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                overflow: TextOverflow.clip,
+              )),
+              const SizedBox(
+                width: 15,
               ),
-              const SizedBox(width: 5),
-              OutlinedButton(
-                onPressed: moveToGallery,
-                style: Theme.of(context).brightness == Brightness.light
-                    ? ButtonStyle(
-                        foregroundColor:
-                            MaterialStateProperty.all(Colors.black),
-                        overlayColor: MaterialStateProperty.all(
-                            const Color.fromARGB(20, 0, 0, 0)))
-                    : ButtonStyle(
-                        foregroundColor:
-                            MaterialStateProperty.all(Colors.white),
-                        overlayColor: MaterialStateProperty.all(
-                            const Color.fromARGB(20, 255, 255, 255))),
-                child: const Text('Move Clips to Gallery'),
-              )
+              ElevatedButton.icon(
+                  label: Text(cameraController.value.isRecordingVideo
+                      ? 'Stop'
+                      : 'Record'),
+                  onPressed: cameraController.value.isRecordingVideo
+                      ? () => stopRecording(false)
+                      : recordMins > 0 && recordCount >= 0
+                          ? () {
+                              if (saveDir == null) {
+                                showDialog(
+                                    context: context,
+                                    builder: (BuildContext ctx) {
+                                      return const AlertDialog(
+                                          title: Text('Storage Error'),
+                                          content: Text(
+                                              'Could not configure storage directory. This error is unrecoverable.'));
+                                    });
+                              } else {
+                                recordRecursively();
+                              }
+                            }
+                          : null,
+                  icon: Icon(cameraController.value.isRecordingVideo
+                      ? Icons.stop
+                      : Icons.circle)),
             ],
           ),
+        ),
+        const Divider(
+          height: 0,
         ),
         SwitchListTile(
             onChanged: (_) {
@@ -314,7 +317,6 @@ class _MyHomePageState extends State<MyHomePage> {
                 ? null
                 : Text(
                     'Serving on ${'http://${ip ?? server?.host}:${server?.port}'}',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
                   )),
         if (saving || moving)
           Container(
@@ -342,11 +344,11 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Future<void> toggleWeb() async {
-    if (server == null) {
+    if (server == null && saveDir != null) {
       try {
         ip = await NetworkInfo().getWifiIP();
         server = await Dhttpd.start(
-            path: saveDir.path, address: InternetAddress.anyIPv4);
+            path: saveDir!.path, address: InternetAddress.anyIPv4);
         setState(() {});
       } catch (e) {
         showInSnackBar('Error - try restarting the app');
@@ -365,17 +367,9 @@ class _MyHomePageState extends State<MyHomePage> {
     });
   }
 
-  String getStatusText() {
+  String? getStatusText() {
     if (recordMins <= 0 || recordCount < 0) {
-      String res = '';
-      if (recordMins <= 0) res += 'Length must be above 0.';
-      if (recordCount < 0) {
-        if (res.isNotEmpty) {
-          res += ' ';
-        }
-        res += 'Count must be 0 (infinite) or more.';
-      }
-      return res;
+      return null;
     }
     String status1 = cameraController.value.isRecordingVideo
         ? 'Now recording'
@@ -383,10 +377,6 @@ class _MyHomePageState extends State<MyHomePage> {
     int totalMins = recordMins * recordCount;
     String status2 =
         '$recordMins min clips ${recordCount == 0 ? '(until space runs out)' : '(keeping the latest ${totalMins < 60 ? '$totalMins minutes' : '${totalMins / 60} hours'})'}.';
-    if (!cameraController.value.isRecordingVideo && recordMins > 15) {
-      status1 = 'Warning: Long clip lengths (above 15) may cause crashes.\n\n'
-          '$status1';
-    }
     return '$status1 $status2';
   }
 
@@ -405,16 +395,15 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  String latestFileName() {
-    return 'CVR-${currentClipStart.millisecondsSinceEpoch.toString()}.mp4';
+  String latestFilePath() {
+    return '${saveDir?.path ?? ''}/CVR-${currentClipStart.millisecondsSinceEpoch.toString()}.mp4';
   }
 
   Future<void> stopRecording(bool cleanup) async {
     if (cameraController.value.isRecordingVideo) {
       XFile tempFile = await cameraController.stopVideoRecording();
       setState(() {});
-      String appDocPath = saveDir.path;
-      String filePath = '$appDocPath/${latestFileName()}';
+      String filePath = latestFilePath();
       // Once clip is saved, deleting cached copy and cleaning up old clips can be done asynchronously
       setState(() {
         saving = true;
@@ -447,52 +436,6 @@ class _MyHomePageState extends State<MyHomePage> {
       }
     }
     return ret;
-  }
-
-  moveToGallery() async {
-    List<FileSystemEntity> existingClips = await getExistingClips();
-    if (existingClips.isEmpty) {
-      showInSnackBar('You have no recorded Clips!');
-    } else if (saving) {
-      showInSnackBar('A clip is still being saved - try again later');
-    } else {
-      showDialog(
-          context: context,
-          builder: (BuildContext ctx) {
-            return AlertDialog(
-              title: const Text('Confirmation'),
-              content: const Text(
-                  'This action will move all Clips in this App\'s internal storage to an external location accessible via a Gallery app.\n\nThese clips will no longer be "owned" by the App, so they will not be accessible via the Web GUI nor affected by the Clip Count Limit.\n\nContinue?'),
-              actions: [
-                TextButton(
-                    onPressed: () async {
-                      // Remove the box
-                      setState(() {
-                        moving = true;
-                      });
-                      Navigator.of(context).pop();
-                      for (var eC in existingClips) {
-                        await GallerySaver.saveVideo(eC.path,
-                            albumName: 'Circular Video Recorder');
-                      }
-                      await Future.wait(existingClips.map((eC) => eC.delete()));
-                      generateHTMLList();
-                      showInSnackBar(
-                          '${existingClips.length} Clips moved to Gallery');
-                      setState(() {
-                        moving = false;
-                      });
-                    },
-                    child: const Text('Yes')),
-                TextButton(
-                    onPressed: () {
-                      Navigator.of(context).pop();
-                    },
-                    child: const Text('No'))
-              ],
-            );
-          });
-    }
   }
 
   @override
