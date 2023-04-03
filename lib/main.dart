@@ -303,18 +303,19 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
         ),
         SwitchListTile(
-          onChanged: (_) {
-            toggleWeb();
-          },
-          visualDensity: VisualDensity.compact,
-          value: server != null,
-          activeColor: Theme.of(context).colorScheme.secondary,
-          title: const Text('Serve Clips on Web GUI'),
-          subtitle: server != null
-              ? Text(
-                  'Serving on ${ip != null ? 'http://$ip:${server?.port} (LAN)' : 'http://${server?.host}:${server?.port}'}')
-              : null,
-        ),
+            onChanged: (_) {
+              toggleWeb();
+            },
+            visualDensity: VisualDensity.compact,
+            value: server != null,
+            activeColor: Theme.of(context).colorScheme.secondary,
+            title: const Text('Serve Clips on Web GUI (Insecure)'),
+            subtitle: server == null
+                ? null
+                : Text(
+                    'Serving on ${'http://${ip ?? server?.host}:${server?.port}'}',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  )),
         if (saving || moving)
           Container(
               decoration:
